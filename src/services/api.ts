@@ -1,4 +1,6 @@
-const API_BASE_URL = 'http://localhost:3001/api';
+const API_BASE_URL = import.meta.env.PROD 
+  ? 'https://crono-juventude-backend-production.up.railway.app/api'
+  : 'http://localhost:3001/api';
 
 class ApiService {
   private getAuthHeaders() {
@@ -136,6 +138,36 @@ class ApiService {
   // Health check
   async healthCheck() {
     return this.request<{status: string, timestamp: string}>('/health');
+  }
+
+  // Relatório de frequência
+  async getAttendanceReport(params: {
+    startDate: string;
+    endDate: string;
+    employeeId?: string;
+  }) {
+    const searchParams = new URLSearchParams();
+    searchParams.append('startDate', params.startDate);
+    searchParams.append('endDate', params.endDate);
+    if (params.employeeId) searchParams.append('employeeId', params.employeeId);
+    
+    return this.request<any[]>(`/time-records/attendance-report?${searchParams.toString()}`);
+  }
+
+  // Gerar registros de falta para uma data
+  async generateAbsenceRecords(date: string) {
+    return this.request<{message: string}>('/time-records/generate-absences', {
+      method: 'POST',
+      body: JSON.stringify({ date })
+    });
+  }
+
+  // Marcar falta manualmente
+  async markAbsence(employeeId: string, date: string, status: string, observations?: string, shift?: string) {
+    return this.request<any>('/time-records/mark-absence', {
+      method: 'POST',
+      body: JSON.stringify({ employeeId, date, status, observations, shift })
+    });
   }
 }
 

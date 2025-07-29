@@ -1,15 +1,28 @@
-import React from 'react';
-import { Clock, Users, CheckCircle, XCircle, Calendar } from 'lucide-react';
+import React, { useState } from 'react';
+import { Clock, Users, CheckCircle, XCircle, Calendar, AlertTriangle, UserX } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useData } from '@/context/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/hooks/use-toast';
+import { AttendanceStatus, ShiftType } from '@/types';
+import { api } from '@/services/api';
 
 const Dashboard: React.FC = () => {
-  const { getScheduledEmployeesToday, getTodayRecords, clockInOut } = useData();
+  const { getScheduledEmployeesToday, getTodayRecords, clockInOut, refreshData } = useData();
   const navigate = useNavigate();
+  
+  // Estados para modais de confirmação
+  const [confirmDialog, setConfirmDialog] = useState({ 
+    open: false, 
+    type: '', 
+    employeeId: '', 
+    employeeName: '', 
+    shift: ShiftType.FULL_DAY 
+  });
   
   const scheduledEmployees = getScheduledEmployeesToday();
   const todayRecords = getTodayRecords();
@@ -20,9 +33,21 @@ const Dashboard: React.FC = () => {
     minute: '2-digit' 
   });
 
-  const handleTimeRecord = async (employeeId: string) => {
+  // Abrir confirmação para registro de ponto
+  const openConfirmation = (type: string, employeeId: string, employeeName: string) => {
+    setConfirmDialog({
+      open: true,
+      type,
+      employeeId,
+      employeeName,
+      shift: ShiftType.FULL_DAY
+    });
+  };
+
+  // Registrar ponto após confirmação
+  const handleTimeRecord = async () => {
     try {
-      const result = await clockInOut(employeeId);
+      const result = await clockInOut(confirmDialog.employeeId);
       
       if (result.success) {
         toast({
@@ -42,12 +67,53 @@ const Dashboard: React.FC = () => {
         description: error.message || "Não foi possível registrar o ponto.",
         variant: "destructive",
       });
+    } finally {
+      setConfirmDialog({ ...confirmDialog, open: false });
     }
+  };
+
+  // Marcar falta
+  const handleMarkAbsence = async () => {
+    try {
+      await api.markAbsence(
+        confirmDialog.employeeId,
+        today,
+        AttendanceStatus.ABSENT,
+        `Falta ${getShiftLabel(confirmDialog.shift)} - Registrado pelo administrador`,
+        confirmDialog.shift
+      );
+
+      toast({
+        title: "Falta registrada",
+        description: `Falta ${getShiftLabel(confirmDialog.shift)} registrada para ${confirmDialog.employeeName}.`,
+      });
+
+      // Atualizar dados sem recarregar a página
+      await refreshData();
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao registrar falta.",
+        variant: "destructive",
+      });
+    } finally {
+      setConfirmDialog({ ...confirmDialog, open: false });
+    }
+  };
+
+  const getShiftLabel = (shift: ShiftType) => {
+    const labels = {
+      [ShiftType.MORNING]: 'Manhã',
+      [ShiftType.AFTERNOON]: 'Tarde',
+      [ShiftType.FULL_DAY]: 'Dia Inteiro'
+    };
+    return labels[shift];
   };
 
   const getEmployeeStatus = (employeeId: string) => {
     const record = todayRecords.find(r => r.employeeId === employeeId);
     if (!record) return { status: 'not-started', label: 'Não registrado', color: 'secondary' };
+    if (record.status === AttendanceStatus.ABSENT) return { status: 'absent', label: 'Faltou', color: 'destructive' };
     if (record.entryTime && !record.exitTime) return { status: 'working', label: 'Trabalhando', color: 'info' };
     if (record.entryTime && record.exitTime) return { status: 'finished', label: 'Finalizado', color: 'success' };
     return { status: 'not-started', label: 'Não registrado', color: 'secondary' };
@@ -195,27 +261,43 @@ const Dashboard: React.FC = () => {
                     </div>
 
                     <div className="flex gap-2">
-                      {!record?.entryTime && (
-                        <Button
-                          onClick={() => handleTimeRecord(employee.id)}
-                          size="sm"
-                          className="gap-2"
-                        >
-                          <Clock className="h-4 w-4" />
-                          Registrar Entrada
-                        </Button>
-                      )}
-                      
-                      {record?.entryTime && !record?.exitTime && (
-                        <Button
-                          onClick={() => handleTimeRecord(employee.id)}
-                          variant="outline"
-                          size="sm"
-                          className="gap-2"
-                        >
-                          <Clock className="h-4 w-4" />
-                          Registrar Saída
-                        </Button>
+                      {/* Não mostrar botões se o funcionário levou falta */}
+                      {record?.status !== AttendanceStatus.ABSENT && (
+                        <>
+                          {!record?.entryTime && (
+                            <>
+                              <Button
+                                onClick={() => openConfirmation('entry', employee.id, employee.name)}
+                                size="sm"
+                                className="gap-2"
+                              >
+                                <Clock className="h-4 w-4" />
+                                Registrar Entrada
+                              </Button>
+                              <Button
+                                onClick={() => openConfirmation('absence', employee.id, employee.name)}
+                                variant="destructive"
+                                size="sm"
+                                className="gap-2"
+                              >
+                                <UserX className="h-4 w-4" />
+                                Marcar Falta
+                              </Button>
+                            </>
+                          )}
+                          
+                          {record?.entryTime && !record?.exitTime && (
+                            <Button
+                              onClick={() => openConfirmation('exit', employee.id, employee.name)}
+                              variant="outline"
+                              size="sm"
+                              className="gap-2"
+                            >
+                              <Clock className="h-4 w-4" />
+                              Registrar Saída
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -225,6 +307,68 @@ const Dashboard: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Modal de Confirmação */}
+      <Dialog open={confirmDialog.open} onOpenChange={() => setConfirmDialog({...confirmDialog, open: false})}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-orange-500" />
+              Confirmar Ação
+            </DialogTitle>
+            <DialogDescription>
+              {confirmDialog.type === 'entry' && (
+                <>Registrar <strong>entrada</strong> para <strong>{confirmDialog.employeeName}</strong>?</>
+              )}
+              {confirmDialog.type === 'exit' && (
+                <>Registrar <strong>saída</strong> para <strong>{confirmDialog.employeeName}</strong>?</>
+              )}
+              {confirmDialog.type === 'absence' && (
+                <>Marcar <strong>falta</strong> para <strong>{confirmDialog.employeeName}</strong>?</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {confirmDialog.type === 'absence' && (
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Turno da Falta</label>
+                <Select 
+                  value={confirmDialog.shift} 
+                  onValueChange={(value: ShiftType) => setConfirmDialog({...confirmDialog, shift: value})}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ShiftType.MORNING}>Manhã</SelectItem>
+                    <SelectItem value={ShiftType.AFTERNOON}>Tarde</SelectItem>
+                    <SelectItem value={ShiftType.FULL_DAY}>Dia Inteiro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setConfirmDialog({...confirmDialog, open: false})}
+            >
+              Cancelar
+            </Button>
+            {confirmDialog.type === 'absence' ? (
+              <Button variant="destructive" onClick={handleMarkAbsence}>
+                Marcar Falta
+              </Button>
+            ) : (
+              <Button onClick={handleTimeRecord}>
+                {confirmDialog.type === 'entry' ? 'Registrar Entrada' : 'Registrar Saída'}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
